@@ -1,0 +1,63 @@
+version: "3.9"
+
+# Full local stack — includes Redis + Surya OCR support
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: compliance-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB:       compliance_db
+    ports: ["5432:5432"]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: compliance-redis
+    restart: unless-stopped
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      retries: 5
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: compliance-backend
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:password@postgres:5432/compliance_db
+      REDIS_URL:    redis://redis:6379
+      SURYA_ENABLED: "false"   # set to "true" only if host has 4GB+ RAM
+    ports: ["8000:8000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+    volumes:
+      - ../backend:/app   # hot-reload in dev
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: compliance-frontend
+    restart: unless-stopped
+    ports: ["3000:80"]
+    depends_on: [backend]
+    environment:
+      VITE_API_URL: http://localhost:8000/api/v1
+
+volumes:
+  postgres_data:
